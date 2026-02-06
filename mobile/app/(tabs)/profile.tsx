@@ -5,7 +5,8 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect, useRouter } from "expo-router";
 import { Colors } from "../../constants/theme";
 import { useColorScheme } from "../../hooks/use-color-scheme";
-import { clearAuthToken, getAuthUser } from "../../lib/auth";
+import { API_URL } from "../../lib/api";
+import { clearAuthToken, getAuthUser, setAuthTokens, setAuthUser } from "../../lib/auth";
 import * as ImagePicker from "expo-image-picker";
 import { getProfileAvatar, getProfileName, setProfileAvatar, setProfileName } from "../../lib/profile";
 
@@ -21,6 +22,11 @@ export default function ProfileScreen() {
   const [email, setEmail] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
   const [editOpen, setEditOpen] = useState(false);
+  const [authOpen, setAuthOpen] = useState(false);
+  const [authMode, setAuthMode] = useState<"login" | "signup">("login");
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authLoading, setAuthLoading] = useState(false);
   const [draftName, setDraftName] = useState("");
   const [draftAvatar, setDraftAvatar] = useState<string | null>(null);
   const [language, setLanguage] = useState("English");
@@ -161,6 +167,54 @@ export default function ProfileScreen() {
 
   const languageOptions = ["English", "Русский", "Español"];
   const currencyOptions = ["USD", "EUR", "RUB"];
+  const isSignedIn = Boolean(userId);
+
+  const handleSignInPress = useCallback(() => {
+    setAuthMode("login");
+    setAuthOpen(true);
+  }, []);
+
+  const handleAuthSubmit = useCallback(async () => {
+    if (!authEmail.trim() || !authPassword.trim()) {
+      Alert.alert("Missing info", "Enter email and password.");
+      return;
+    }
+
+    try {
+      setAuthLoading(true);
+      const endpoint = authMode === "login" ? "/auth/login" : "/auth/signup";
+      const response = await fetch(`${API_URL}${endpoint}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: authEmail.trim(), password: authPassword }),
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload?.error ?? "Auth failed");
+      }
+
+      const accessToken = payload?.session?.access_token as string | undefined;
+      const refreshToken = payload?.session?.refresh_token as string | undefined;
+
+      if (!accessToken) {
+        Alert.alert(
+          "Confirm email",
+          "Check your email to confirm the account before signing in."
+        );
+        return;
+      }
+
+      await setAuthUser(payload?.user ?? null);
+      await setAuthTokens(accessToken, refreshToken ?? null);
+      setAuthOpen(false);
+      setAuthPassword("");
+      await loadProfile();
+    } catch (error: any) {
+      Alert.alert("Auth error", error?.message ?? "Request failed");
+    } finally {
+      setAuthLoading(false);
+    }
+  }, [authEmail, authMode, authPassword, loadProfile]);
 
   return (
     <ScrollView
@@ -168,73 +222,67 @@ export default function ProfileScreen() {
         flexGrow: 1,
         padding: 24,
         paddingTop: Math.max(insets.top + 12, 24),
-        gap: 16,
+        gap: 18,
         backgroundColor: colorScheme === "dark" ? colors.background : palette.lightBackground,
       }}
     >
-      <Text style={{ fontSize: 28, fontWeight: "800", color: colors.text }}>
-        Profile
-      </Text>
+      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+        <Text style={{ fontSize: 28, fontWeight: "800", color: colors.text }}>
+          Profile
+        </Text>
+        {!isSignedIn ? (
+          <Pressable onPress={handleSignInPress} style={{ paddingHorizontal: 8, paddingVertical: 6 }}>
+            <Text style={{ color: palette.accent, fontWeight: "700" }}>Sign in</Text>
+          </Pressable>
+        ) : null}
+      </View>
 
-      <View
+      <Pressable
+        onPress={isSignedIn ? openEditProfile : handleSignInPress}
         style={{
           backgroundColor: cardBackground,
           borderRadius: 20,
-          padding: 20,
-          gap: 12,
+          padding: 16,
+          flexDirection: "row",
+          alignItems: "center",
+          gap: 14,
           shadowColor: "#000",
           shadowOpacity: colorScheme === "dark" ? 0 : 0.08,
           shadowRadius: 12,
           shadowOffset: { width: 0, height: 6 },
         }}
       >
-        <Pressable
-          onPress={openEditProfile}
-          style={{ alignSelf: "flex-end", paddingHorizontal: 12, paddingVertical: 6 }}
+        <View
+          style={{
+            width: 64,
+            height: 64,
+            borderRadius: 32,
+            backgroundColor: "rgba(0,0,0,0.1)",
+            alignItems: "center",
+            justifyContent: "center",
+            overflow: "hidden",
+          }}
         >
-          <Text style={{ color: palette.accent, fontWeight: "600" }}>Edit Profile</Text>
-        </Pressable>
-        <View style={{ alignItems: "center", gap: 10 }}>
-          <View
-            style={{
-              width: 88,
-              height: 88,
-              borderRadius: 44,
-              backgroundColor: "rgba(0,0,0,0.1)",
-              alignItems: "center",
-              justifyContent: "center",
-              overflow: "hidden",
-            }}
-          >
-            {avatarUri ? (
-              <Image source={{ uri: avatarUri }} style={{ width: 88, height: 88 }} />
-            ) : (
-              <Text style={{ color: colors.text, fontSize: 26, fontWeight: "700" }}>{initials}</Text>
-            )}
-          </View>
-          <View style={{ alignItems: "center" }}>
-            <Text style={{ fontSize: 18, fontWeight: "700", color: colors.text }}>
-              {name || "Guest"}
-            </Text>
-            <Text style={{ color: muted, marginTop: 4 }}>{email ?? ""}</Text>
-            <Text style={{ color: muted, marginTop: 2 }}>Coffee lover · Remote</Text>
-          </View>
-          <Pressable
-            onPress={openEditProfile}
-            style={{
-              marginTop: 6,
-              paddingVertical: 10,
-              paddingHorizontal: 22,
-              borderRadius: 999,
-              backgroundColor: palette.accent,
-            }}
-          >
-            <Text style={{ color: "white", fontWeight: "600" }}>Edit Profile</Text>
-          </Pressable>
+          {avatarUri ? (
+            <Image source={{ uri: avatarUri }} style={{ width: 64, height: 64 }} />
+          ) : (
+            <Text style={{ color: colors.text, fontSize: 22, fontWeight: "700" }}>{initials}</Text>
+          )}
         </View>
-      </View>
+        <View style={{ flex: 1 }}>
+          <Text style={{ fontSize: 18, fontWeight: "700", color: colors.text }}>
+            {name || "Guest"}
+          </Text>
+          <Text style={{ color: muted, marginTop: 4 }}>{email ?? ""}</Text>
+          <Text style={{ color: muted, marginTop: 2 }}>Coffee lover · Remote</Text>
+        </View>
+        <Text style={{ color: muted, fontSize: 18 }}>›</Text>
+      </Pressable>
 
       <View style={{ gap: 12 }}>
+        <Text style={{ color: muted, fontSize: 13, fontWeight: "600", marginLeft: 6 }}>
+          Account
+        </Text>
         {[
           {
             label: "Order History",
@@ -242,6 +290,47 @@ export default function ProfileScreen() {
             icon: "🕘",
             onPress: () => router.push("/(tabs)/history"),
           },
+        ].map((item) => (
+          <Pressable
+            key={item.label}
+            onPress={item.onPress}
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              gap: 12,
+              padding: 14,
+              borderRadius: 16,
+              backgroundColor: cardBackground,
+            }}
+          >
+            <View
+              style={{
+                width: 36,
+                height: 36,
+                borderRadius: 18,
+                backgroundColor: "rgba(240,132,47,0.15)",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <Text>{item.icon}</Text>
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: colors.text, fontWeight: "600" }}>{item.label}</Text>
+              {item.value ? (
+                <Text style={{ color: muted, marginTop: 2 }}>{item.value}</Text>
+              ) : null}
+            </View>
+            <Text style={{ color: muted, fontSize: 18 }}>›</Text>
+          </Pressable>
+        ))}
+      </View>
+
+      <View style={{ gap: 12 }}>
+        <Text style={{ color: muted, fontSize: 13, fontWeight: "600", marginLeft: 6 }}>
+          Preferences
+        </Text>
+        {[
           {
             label: "Language",
             value: language,
@@ -281,28 +370,129 @@ export default function ProfileScreen() {
             </View>
             <View style={{ flex: 1 }}>
               <Text style={{ color: colors.text, fontWeight: "600" }}>{item.label}</Text>
-              {item.value ? (
-                <Text style={{ color: muted, marginTop: 2 }}>{item.value}</Text>
-              ) : null}
+              <Text style={{ color: muted, marginTop: 2 }}>{item.value}</Text>
             </View>
             <Text style={{ color: muted, fontSize: 18 }}>›</Text>
           </Pressable>
         ))}
       </View>
 
-      <Pressable
-        onPress={handleLogout}
-        style={{
-          padding: 12,
-          borderRadius: 12,
-          borderWidth: 1,
-          borderColor: colorScheme === "dark" ? "rgba(255,255,255,0.2)" : "#ddd",
-        }}
-      >
-        <Text style={{ color: colors.text, textAlign: "center" }}>
-          Sign out
-        </Text>
-      </Pressable>
+      {isSignedIn ? (
+        <Pressable
+          onPress={handleLogout}
+          style={{
+            marginTop: 8,
+            padding: 12,
+            borderRadius: 12,
+            borderWidth: 1,
+            borderColor: colorScheme === "dark" ? "rgba(255,255,255,0.2)" : "#ddd",
+          }}
+        >
+          <Text style={{ color: colors.text, textAlign: "center" }}>
+            Sign out
+          </Text>
+        </Pressable>
+      ) : null}
+
+      <Modal visible={authOpen} transparent animationType="fade">
+        <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.4)", justifyContent: "center" }}>
+          <View
+            style={{
+              marginHorizontal: 24,
+              borderRadius: 20,
+              padding: 20,
+              backgroundColor: cardBackground,
+              gap: 16,
+            }}
+          >
+            <Text style={{ color: colors.text, fontWeight: "700", fontSize: 18 }}>
+              {authMode === "login" ? "Sign in" : "Create account"}
+            </Text>
+            <View style={{ gap: 6 }}>
+              <Text style={{ color: muted, fontSize: 12 }}>Email</Text>
+              <TextInput
+                value={authEmail}
+                onChangeText={setAuthEmail}
+                placeholder="you@example.com"
+                placeholderTextColor={muted}
+                keyboardType="email-address"
+                autoCapitalize="none"
+                style={{
+                  borderWidth: 1,
+                  borderColor: colorScheme === "dark" ? "rgba(255,255,255,0.2)" : "#ddd",
+                  borderRadius: 12,
+                  padding: 12,
+                  color: colors.text,
+                  backgroundColor: colorScheme === "dark" ? "#1f2a35" : "#fff",
+                }}
+              />
+            </View>
+            <View style={{ gap: 6 }}>
+              <Text style={{ color: muted, fontSize: 12 }}>Password</Text>
+              <TextInput
+                value={authPassword}
+                onChangeText={setAuthPassword}
+                placeholder="••••••••"
+                placeholderTextColor={muted}
+                secureTextEntry
+                style={{
+                  borderWidth: 1,
+                  borderColor: colorScheme === "dark" ? "rgba(255,255,255,0.2)" : "#ddd",
+                  borderRadius: 12,
+                  padding: 12,
+                  color: colors.text,
+                  backgroundColor: colorScheme === "dark" ? "#1f2a35" : "#fff",
+                }}
+              />
+            </View>
+            <View style={{ flexDirection: "row", gap: 12 }}>
+              <Pressable
+                onPress={() => setAuthOpen(false)}
+                style={{
+                  flex: 1,
+                  padding: 12,
+                  borderRadius: 12,
+                  borderWidth: 1,
+                  borderColor: colorScheme === "dark" ? "rgba(255,255,255,0.2)" : "#ddd",
+                }}
+              >
+                <Text style={{ color: colors.text, textAlign: "center" }}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                onPress={handleAuthSubmit}
+                style={{
+                  flex: 1,
+                  padding: 12,
+                  borderRadius: 12,
+                  backgroundColor: palette.accent,
+                  opacity: authLoading ? 0.7 : 1,
+                }}
+                disabled={authLoading}
+              >
+                <Text style={{ color: "white", textAlign: "center", fontWeight: "600" }}>
+                  {authLoading
+                    ? "Working..."
+                    : authMode === "login"
+                      ? "Sign in"
+                      : "Sign up"}
+                </Text>
+              </Pressable>
+            </View>
+            <Pressable
+              onPress={() =>
+                setAuthMode((prev) => (prev === "login" ? "signup" : "login"))
+              }
+              style={{ alignSelf: "center", paddingVertical: 6 }}
+            >
+              <Text style={{ color: palette.accent, fontWeight: "600" }}>
+                {authMode === "login"
+                  ? "New here? Create an account"
+                  : "Already have an account? Sign in"}
+              </Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
 
       <Modal visible={editOpen} transparent animationType="fade">
         <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.4)", justifyContent: "center" }}>
